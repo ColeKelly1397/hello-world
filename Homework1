@@ -1,0 +1,193 @@
+from math import *
+from numpy import matmul
+from numpy import linspace
+from scipy.integrate import odeint
+
+
+class MAV:
+    def __init__(self):
+        self.mass = 1491
+        self.Ix = 9496
+        self.Iy = 55814
+        self.Iz = 63100
+        self.Ixz = 982
+        self.name = "F16 Fighting Falcon"
+        self.x = 100
+        self.y = 200
+        self.z = -500
+        self.psi = 90
+        self.theta = 15
+        self.phi = 20
+        self.grav = 32.174
+        self.Fx = 0
+        self.Fy =0
+        self.Fz =0
+        self.M =0
+        self.N =0
+        self.L =0
+
+    def initstate(self):
+        return [x, y, z, psi, theta, phi]
+    def inertias(self):
+        return [Ix, Iy, Iz, Ixz]
+    def ForMon(self):
+        return [Fx, Fy, Fz, M, N, L]
+
+def Euler3212EP(angles, rad = False):
+    #angles = [heading, pitch, roll] and return EP = [q0, q1, q2, q3]'
+
+    [psi, theta, phi] = angles
+
+    if not rad:
+        for x in range(3):
+            angles[x] = angles[x] * pi / 180
+
+
+    EP = [cos(psi/2)*cos(theta/2)*cos(phi/2) + sin(psi/2)*sin(theta/2)*sin(phi/2),
+          cos(psi/2)*cos(theta/2)*sin(phi/2) - sin(psi/2)*sin(theta/2)*cos(phi/2),
+          cos(psi/2)*sin(theta/2)*cos(phi/2) + sin(psi/2)*cos(theta/2)*sin(phi/2),
+          sin(psi/2)*cos(theta/2)*cos(phi/2) - cos(psi/2)*sin(theta/2)*sin(phi/2)]
+
+    for x in range(4):
+        EP[x] = round(EP[x],4)
+
+    return EP
+
+def EP2Euler321(EP):
+    #manipulates q matrix, q=[q0, q1, q2, q3] and returns EA = [heading, pitch, roll]'
+
+    angles = [atan2(2*(EP[0]*EP[1]+EP[2]*EP[3]),(EP[0]**2+EP[3]**2-EP[1]**2-EP[2]**2)),
+              asin(2*(EP[0]*EP[2]-EP[1]*EP[3])),
+              atan2(2*(EP[0]*EP[3]+EP[1]*EP[2]),(EP[0]**2+EP[1]**2-EP[2]**2-EP[3]**2))]
+
+    for x in range(3):
+        angles[x] = angles[x]*(180/pi)
+        angles[x] = round(angles[x],4)
+
+    return angles
+
+def derivatives(state, FM):
+    [pn, pe, pd,  u, v, w,  e0, e1, e2, e3,  p, q, r] = state
+    [Fx, Fy, Fz, L, M, N] = FM
+    Ix = f_16.Ix
+    Iy = f_16.Iy
+    Iz = f_16.Iz
+    Ixz = f_16.Ixz
+    #[x, y, z, psi, theta, phi] = f_16.initstate()
+    x = f_16.x
+    y = f_16.y
+    z = f_16.z
+    psi = f_16.psi
+    theta = f_16.theta
+    phi = f_16.phi
+    m = f_16.mass
+    angles = EP2Euler321([e0, e1, e2, e3])
+    [psi, theta, phi] = angles
+
+    poskin = [0,0,0]
+    A = [[cos(theta) * cos(psi), sin(phi) * sin(theta) * sin(psi) - cos(phi) * cos(psi), cos(phi) * sin(theta) * cos(psi) + sin(phi) * sin(psi)],
+          [cos(theta) * sin(psi), sin(phi) * sin(theta) * sin(psi) + cos(phi) * cos(psi),cos(phi) * sin(theta) * sin(psi) - sin(phi) * cos(psi)],
+          [-sin(theta), sin(phi) * cos(theta), cos(phi) * cos(theta)]]
+    B = [u, v, w]
+    poskin = matmul(A, B)
+
+    posdyn = [0,0,0]
+    posdyn = [r*v - q*w + Fx/m,
+              p*w - r*u + Fy/m,
+              q*u - p*v + Fz/m]
+
+    rotkin = [0,0,0]
+    C = [[0, -p, -q, -r],
+         [p, 0, r, -q],
+         [q, -r, 0, p],
+         [r, q, -p, 0]]
+    D = [e0, e1, e2, e3]
+    rotkin = 0.5 * matmul(C, D)
+
+    Gamma = [Ix * Iz - Ixz ** 2, 0, 0, 0, 0, 0, 0, 0, 0]
+    Gamma[1] = Ixz * (Ix - Iy - Iz) / Gamma[0]
+    Gamma[2] = (Iz * (Iz - Iy) + Ixz ** 2) / Gamma[0]
+    Gamma[3] = Iz / Gamma[0]
+    Gamma[4] = Ixz / Gamma[0]
+    Gamma[5] = (Iz - Ix) / Iy
+    Gamma[6] = Ixz / Iy
+    Gamma[7] = (Ix * (Ix - Iy) + Ixz ** 2) / Gamma[0]
+    Gamma[8] = Ix / Gamma[0]
+
+    rotdyn = [Gamma[1]*p*q - Gamma[2]*q*r + Gamma[3]*L+Gamma[4]*N,
+              Gamma[5]*p*r - Gamma[6]*(p**2 - r**2) + (1/Iy)*M,
+              Gamma[7]*p*q - Gamma[1]*q*r + Gamma[4]*L+Gamma[8]*N]
+
+
+    # position kinematics
+    pn_dot = poskin[0]
+    pe_dot = poskin[1]
+    pd_dot = poskin[2]
+
+    # position dynamics
+    u_dot = posdyn[0]
+    v_dot = posdyn[1]
+    w_dot = posdyn[2]
+
+    # rotational kinematics
+    e0_dot = rotkin[1]
+    e1_dot = rotkin[1]
+    e2_dot = rotkin[2]
+    e3_dot = rotkin[3]
+
+    # rotational dynamics
+    p_dot = rotdyn[0]
+    q_dot = rotdyn[1]
+    r_dot = rotdyn[2]
+
+    # collect all the derivatives of the states
+    xdot = [pn_dot, pe_dot, pd_dot, u_dot, v_dot, w_dot, e0_dot, e1_dot, e2_dot, e3_dot, p_dot, q_dot, r_dot]
+
+def integrator(tf = 10, deltat = 0.05, graphing = True):
+    pts = (tf/deltat)//1
+    t = linspace(0,tf, pts+1)
+    initstate = [f_16.x, f_16.y, f_16.z]
+    func = odeint(derivatives, initstate, t)
+
+    if graphing:
+        from mpl_toolkits import mplot3d
+        import matplotlib.pyplot as plot
+
+        figure = plot.figure()
+        XX = plot.axes(projection = "3D")
+        XX.plot3D(func[:,0], func[:,1], func[:,2], linestyle = '--', marker = '.')
+        plot.show()
+
+    return [t, func]
+
+
+
+if __name__ == '__main__':
+    # Question 2-------------------------------------
+    angles = [150,15,-30]
+    quat = Euler3212EP(angles, rad = False)
+    print('2.a.   Angles to quaternions:')
+    print(quat)
+
+    q = [0.82205, 0.26538, 0.05601, 0.50066]
+    ang = EP2Euler321(q)
+    print ('2.b.  Quaternions to angles:')
+    print(ang)
+
+    # Question 4------------------------------------
+    f_16 = MAV()
+    x = f_16.x
+    y = f_16.y
+    z = f_16.z
+    psi = f_16.psi
+    theta = f_16.theta
+    phi = f_16.phi
+
+    # Question 5------------------------------------
+    # Run 1
+    FM = [0, 0, 0, 0, 0, 0]
+    state = [0,0,0,0,0,0,0,0,0,0,0,0,0]
+    xdot = derivatives(state, FM)
+    # Question 6------------------------------------
+
+    integrator(10, 0.05, True)
